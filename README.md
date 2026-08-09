@@ -32,6 +32,25 @@ It does not stuff whole files into the prompt. For each question it finds the ha
 
 **How it decides what's relevant.** Files are split into ~900-character passages (tagged with their markdown headings), indexed with BM25, and searched against your question plus the last few things the other person said. If nothing scores well enough, nothing is added — Veil stays quiet rather than padding the prompt with noise.
 
+### Semantic search (optional)
+
+Keyword search is exact, instant and free, and it is excellent when your question reuses the document's own words. It is completely blind when it doesn't. Ask *"what's our uptime promise?"* of a handbook that only ever says *"service level agreement guarantees 99.95% availability"* and there is not one content word in common — BM25 scores it zero.
+
+That gap is measurable. On a ten-passage handbook where every fact can be asked two ways (`npm run bench:semantic`):
+
+| Question worded... | Keyword only |
+| --- | --- |
+| using the document's own words | **10/10** |
+| paraphrased | **1/10** |
+
+Turning on **Settings → Context → Semantic search** adds a second retriever that compares *meaning* instead of spelling. Both retrievers run and their rankings are combined, so semantic reach is added without giving up the precision keyword search already had.
+
+**What it costs.** One embedding call per document when you add it, and a small one per question. It needs an **OpenAI or Gemini** key — Anthropic has no embeddings API, so an Anthropic-only setup stays keyword-only. It is **off by default**, because it spends your API credit and that should be your decision rather than a surprise on your next bill.
+
+**How it fails.** Safely, in every direction. No key, network down, or provider slow (past 2.5s) and the question is simply answered with keyword retrieval — it never delays a live call waiting on an embedding. Documents are keyword-searchable the instant they're added; embedding catches up in the background. Switching provider marks the stored vectors unusable and re-embeds rather than comparing vectors from two different models. Turning the setting off deletes the vectors from disk.
+
+Under the hood it is Reciprocal Rank Fusion over the two rankings — deliberately rank-based, because a BM25 score and a cosine similarity are not on comparable scales and any weighted sum of them bakes in a constant that stops being correct as soon as the corpus changes.
+
 ### What if the answer isn't in your documents?
 
 **Veil still answers — using the model's own knowledge, over the normal API call.** Uploading documents adds grounding; it never restricts what Veil is allowed to answer. There are three cases, and you don't have to do anything to switch between them:
@@ -201,7 +220,6 @@ GPL-3.0-or-later.
 Things that are known-imperfect and worth doing next:
 
 - **Electron 43.** Pinned to 33 for stability; the upgrade needs capture, sandbox and stealth re-tested end to end.
-- **Semantic retrieval.** Keyword search does very well on the benchmark, but paraphrased questions ("what's our uptime promise?" against a document that only says "SLA") are its weak spot. Optional embeddings would close that, at the cost of an API call per upload.
 - **An app icon.** Builds currently ship the default Electron icon.
 - **Unbinding from the UI.** The backend supports clearing a shortcut; the Keybinds screen has no control for it yet.
 - **More document formats.** `.docx` and OCR for scanned PDFs are the obvious gaps.

@@ -19,6 +19,7 @@
     "bench": "node --expose-gc bench/context-retrieval.js",
     "bench:huge": "node --expose-gc --max-old-space-size=4096 bench/context-retrieval.js --huge",
     "bench:sweep": "node bench/context-retrieval.js --sweep",
+    "bench:semantic": "node bench/semantic.js",
     "postinstall": "node scripts/rename-electron.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --mac zip",

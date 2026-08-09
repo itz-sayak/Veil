@@ -590,7 +590,27 @@ function docsPayload() {
   // Every mutation drops the cached index; start rebuilding it straight away so
   // the next question doesn't have to wait for it.
   warmDocsIndex();
-  return { docs: contextDocs.listDocs(), enabled: (s.contextDocs || {}).enabled !== false };
+  return {
+    docs: contextDocs.listDocs(),
+    enabled: (s.contextDocs || {}).enabled !== false,
+    semantic: contextDocs.semanticStatus()
+  };
+}
+
+// Embeds anything not yet covered, in the background. Nothing waits on it: the
+// documents are already keyword-searchable, this only widens their reach.
+function embedDocsInBackground() {
+  contextDocs.embedPending((p) => send('docs:progress', p))
+    .then((res) => {
+      if (res && res.ok) send('docs:progress', { state: 'embed-done', embedded: res.embedded, failed: res.failed });
+      warmDocsIndex();
+    })
+    .catch((e) => {
+      recordEvent({
+        level: 'error', event: 'context_docs_embed_failed',
+        msg: e && e.message ? e.message : String(e), frame: 'embedPending'
+      });
+    });
 }
 
 // Ingest is slow enough for a big PDF to look like a hang, so each file reports
@@ -630,6 +650,7 @@ ipcMain.handle('docs:pick', async () => {
     const res = await ingestOne({ name: path.basename(p), buffer });
     if (!res.ok) errors.push(res.error);
   }
+  embedDocsInBackground();
   return { ok: !errors.length, errors, ...docsPayload() };
 });
 
@@ -645,6 +666,7 @@ ipcMain.handle('docs:add', async (_e, files) => {
     const res = await ingestOne({ name: f.name, buffer });
     if (!res.ok) errors.push(res.error);
   }
+  embedDocsInBackground();
   return { ok: !errors.length, errors, ...docsPayload() };
 });
 
@@ -661,6 +683,17 @@ ipcMain.handle('docs:toggle', (_e, payload) => {
 
 ipcMain.handle('docs:set-enabled', (_e, on) => {
   store.setSettings({ contextDocs: { enabled: !!on } });
+  return { ok: true, ...docsPayload() };
+});
+
+// Semantic search on/off. Turning it on kicks off embedding for the existing
+// library; turning it off deletes the vectors rather than leaving the user's
+// disk holding embeddings for a feature they switched off.
+ipcMain.handle('docs:set-semantic', (_e, on) => {
+  const enable = !!on;
+  store.setSettings({ contextDocs: { semantic: enable } });
+  if (enable) embedDocsInBackground();
+  else contextDocs.clearVectors();
   return { ok: true, ...docsPayload() };
 });
 
@@ -796,6 +829,9 @@ app.whenReady().then(() => {
   // question. A large library takes seconds to index; doing that lazily would
   // put the whole delay in front of the first answer of a live call.
   warmDocsIndex();
+  // Catch up on anything added or re-uploaded while semantic search was off, or
+  // left unfinished by a previous run.
+  embedDocsInBackground();
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

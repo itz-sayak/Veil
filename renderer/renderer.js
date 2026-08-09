@@ -1003,7 +1003,7 @@
   veil.on('ui:toggle-stealth', toggleStealth);
 
   // Context documents ------------------------------------------------------
-  let docsState = { docs: [], enabled: true };
+  let docsState = { docs: [], enabled: true, semantic: {} };
 
   function formatBytes(n) {
     if (!n) return '0 KB';
@@ -1015,6 +1015,7 @@
     if (!res) return;
     if (Array.isArray(res.docs)) docsState.docs = res.docs;
     if (typeof res.enabled === 'boolean') docsState.enabled = res.enabled;
+    if (res.semantic) docsState.semantic = res.semantic;
     renderDocs();
   }
 
@@ -1028,8 +1029,33 @@
     catch (_) { /* leave the list as-is */ }
   }
 
+  function renderSemantic() {
+    const s = docsState.semantic || {};
+    setSwitch(document.getElementById('docs-semantic-toggle'), s.on && s.available);
+
+    const badge = document.getElementById('docs-semantic-badge');
+    if (badge) badge.textContent = s.available ? (s.provider === 'gemini' ? '· Gemini' : '· OpenAI') : '· needs an OpenAI or Gemini key';
+
+    const status = document.getElementById('docs-semantic-status');
+    if (!status) return;
+    if (!s.available) {
+      status.textContent = 'Add an OpenAI or Gemini API key in General to enable this. Anthropic keys cannot produce embeddings.';
+    } else if (!s.on) {
+      status.textContent = 'Off — questions are matched on keywords only.';
+    } else if (s.working) {
+      status.textContent = 'Embedding documents…';
+    } else if (s.total && s.embedded < s.total) {
+      status.textContent = `${s.embedded} of ${s.total} documents embedded. The rest are still searchable by keyword.`;
+    } else if (s.total) {
+      status.textContent = `All ${s.total} document${s.total === 1 ? '' : 's'} embedded (${s.model}).`;
+    } else {
+      status.textContent = 'On — documents will be embedded as you add them.';
+    }
+  }
+
   function renderDocs() {
     setSwitch(document.getElementById('docs-toggle'), docsState.enabled);
+    renderSemantic();
 
     const host = document.getElementById('docs-list');
     if (!host) return;
@@ -1100,6 +1126,16 @@
     applyDocsState(await veil.docsSetEnabled(next));
   });
 
+  const docsSemanticEl = document.getElementById('docs-semantic-toggle');
+  if (docsSemanticEl) docsSemanticEl.addEventListener('click', async () => {
+    const s = docsState.semantic || {};
+    if (!s.available) {
+      setDocsStatus('Add an OpenAI or Gemini key in Settings → General first.');
+      return;
+    }
+    applyDocsState(await veil.docsSetSemantic(!s.on));
+  });
+
   const docsPickBtn = document.getElementById('docs-pick');
   if (docsPickBtn) docsPickBtn.addEventListener('click', async () => {
     setDocsStatus('Reading…');
@@ -1139,6 +1175,9 @@
     if (!d) return;
     if (d.state === 'working') setDocsStatus('Reading ' + d.name + '…');
     else if (d.state === 'error') setDocsStatus(d.error || ('Could not read ' + d.name + '.'));
+    else if (d.state === 'embedding') setDocsStatus('Embedding ' + d.name + '…');
+    else if (d.state === 'embed-error') setDocsStatus('Could not embed ' + d.name + ': ' + (d.error || 'unknown error'));
+    else if (d.state === 'embed-done') { setDocsStatus(''); fillDocs(); }
   });
 
   // Language ---------------------------------------------------------------

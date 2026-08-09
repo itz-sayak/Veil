@@ -25,7 +25,10 @@ const DEFAULTS = {
   // Uploaded reference documents. Only the master on/off switch lives here — the
   // document list and its text live in <userData>/context/ (see context-store.js)
   // so this file stays small enough to rewrite on every settings change.
-  contextDocs: { enabled: true },
+  // `semantic` is opt-in: it spends the user's API credit on every upload and
+  // adds a network round trip to each question, so it should be a choice rather
+  // than something that starts costing money on their behalf.
+  contextDocs: { enabled: true, semantic: false },
   // Response language ('en' = default English)
   language: 'en',
   onboarded: false,

@@ -115,19 +115,35 @@ flowchart TB
     C --> D[("userData/context/&lt;id&gt;.json")]
     D --> BG["Background warm-up<br/>one document at a time, yielding"]
     BG --> I[("Inverted index<br/>term → Int32Array postings")]
+    D -.->|"semantic search on"| EMB["Embed passages<br/>background, batched"]
+    EMB -.-> V[("userData/context/&lt;id&gt;.vec<br/>float32, model-stamped")]
 
     Q["Question + last 3 'them' turns"] --> SR["BM25 over posting lists"]
     I --> SR
     SR --> G{"Matched terms carry<br/>≥ 1.5 × log(1+n) of information?"}
-    G -->|no| NONE["Nothing added to the prompt"]
-    G -->|yes| TOP["Top ≤6 passages, ≤3000 chars"]
+    G -->|no| KNONE["no keyword hits"]
+    G -->|yes| KHITS["keyword ranking"]
+
+    Q -.-> QV["Embed the question<br/>cached · 2.5s timeout"]
+    V -.-> VS["Cosine ranking<br/>floor 0.32"]
+    QV -.-> VS
+
+    KHITS --> F["Reciprocal Rank Fusion"]
+    KNONE --> F
+    VS -.-> F
+    F --> TOP["Top ≤6 passages, ≤3000 chars"]
+    F --> NONE["Nothing, if neither retriever qualified"]
 ```
 
-Two design points worth calling out:
+The dotted path is optional and off by default. Everything on it degrades to nothing: no key, no network, or a slow provider and the solid path answers on its own.
+
+Three design points worth calling out:
 
 **The index is warmed in the background at startup**, not lazily on the first question. Indexing a very large library takes seconds, and doing that when someone presses Assist mid-call would freeze the app and stall the answer. It is built one document at a time with a yield in between so nothing blocks.
 
 **The relevance floor is a multiple of `log(1+n)`, not a fixed score.** This is what makes the same question behave the same way whether you have uploaded one file or two hundred. A flat BM25 threshold cannot do that — the same numeric score means completely different things at different corpus sizes, and measurement showed a fixed threshold returning irrelevant passages for **68%** of questions the documents could not answer at all.
+
+**The two retrievers are combined by rank, not by score.** A BM25 score and a cosine similarity live on different scales, and normalising them into a weighted sum bakes in a constant that stops being right the moment the corpus changes. Reciprocal Rank Fusion only asks how highly each retriever placed a passage, which needs no tuning and stays stable as the library grows. It also means a passage found *only* by meaning still surfaces — which is the entire point, since that is the case keyword search cannot see.
 
 ---
 
@@ -182,7 +198,7 @@ Everything the renderer can do, it does through one of these. Anything not on th
 | Ask | `ask` · `transcript:clear` |
 | Modes | `modes:list` · `modes:set-active` · `modes:save` · `modes:delete` |
 | Keybinds | `keybinds:get` · `keybinds:set` · `keybinds:reset` · `keybinds:validate` |
-| Documents | `docs:list` · `docs:pick` · `docs:add` · `docs:delete` · `docs:toggle` · `docs:set-enabled` |
+| Documents | `docs:list` · `docs:pick` · `docs:add` · `docs:delete` · `docs:toggle` · `docs:set-enabled` · `docs:set-semantic` |
 | Window | `mouse:ignore` · `window:drag-start` · `window:drag-move` · `window:drag-end` |
 | Security | `stealth:get` · `stealth:set` · `security:info` |
 | App Link | `applink:state` · `applink:revoke` · `applink:consent-response` |
@@ -213,8 +229,9 @@ That single behaviour is why dragging is implemented by hand rather than with `-
 | `src/prompts.js` | The six functional modes and their prompts |
 | `src/modes.js` | Persona modes (user-editable system prompts) |
 | `src/interview-context.js` | Question-type detection and profile context selection |
-| `src/context-docs.js` | Chunking, tokenising, BM25 — pure, no Electron, unit-tested |
-| `src/context-store.js` | Document persistence, ingest, index warm-up, retrieval |
+| `src/context-docs.js` | Chunking, tokenising, BM25, rank fusion — pure, no Electron, unit-tested |
+| `src/context-store.js` | Document persistence, ingest, index warm-up, embedding job, retrieval |
+| `src/embeddings.js` | Optional semantic vectors (OpenAI / Gemini) behind one interface |
 | `src/pdf-text.js` | PDF text extraction, isolated so a bad PDF can't take ingest down |
 | `src/keybinds.js` | Shortcut defaults, metadata, validation |
 | `src/store.js` | JSON settings store with encrypted secrets |
@@ -228,10 +245,11 @@ That single behaviour is why dragging is implemented by hand rather than with `-
 ## Testing
 
 ```bash
-npm test          # 83 unit tests, node:test — no framework
-npm run bench     # retrieval benchmark: latency, memory, recall, false-fire
-npm run bench:huge    # adds a 76 MB / 143k-passage corpus
-npm run bench:sweep   # the recall vs false-fire curve behind the relevance floor
+npm test               # 102 unit tests, node:test — no framework
+npm run bench          # retrieval benchmark: latency, memory, recall, false-fire
+npm run bench:huge     # adds a 76 MB / 143k-passage corpus
+npm run bench:sweep    # the recall vs false-fire curve behind the relevance floor
+npm run bench:semantic # the paraphrase gap; --embed to measure the semantic path
 ```
 
 The benchmark exists because retrieval quality is not something you can eyeball. It plants facts in a synthetic corpus whose vocabulary follows a natural Zipf distribution, echoes each fact's topic words elsewhere so the retriever has to find the passage that actually answers rather than one that merely mentions the subject, and separately fires questions the corpus **cannot** answer to measure how often retrieval fires when it should stay silent.

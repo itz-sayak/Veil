@@ -50,6 +50,7 @@ const api = {
   docsDelete: (id) => ipcRenderer.invoke('docs:delete', id),
   docsToggle: (id, enabled) => ipcRenderer.invoke('docs:toggle', { id, enabled }),
   docsSetEnabled: (on) => ipcRenderer.invoke('docs:set-enabled', on),
+  docsSetSemantic: (on) => ipcRenderer.invoke('docs:set-semantic', on),
 
   // Keybinds
   keybindsGet: () => ipcRenderer.invoke('keybinds:get'),

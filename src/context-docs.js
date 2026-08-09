@@ -43,6 +43,11 @@ const MIN_IDF_MASS = 1.5;
 // long enough to dominate query time.
 const MAX_DF_RATIO = 0.5;
 
+// Unit-vector dot product == cosine similarity. Imported rather than duplicated;
+// src/embeddings.js loads its provider SDKs lazily, so this file stays free of
+// heavy or Electron-bound dependencies and remains directly unit-testable.
+const { dot } = require('./embeddings');
+
 const K1 = 1.5;               // BM25 term-frequency saturation
 const B = 0.75;               // BM25 length normalisation
 
@@ -312,6 +317,26 @@ function search(index, query, opts) {
   const maxChars = o.maxChars || MAX_SNIPPET_CHARS;
 
   if (!index || !index.n) return [];
+
+  const keyword = keywordRank(index, query, o);
+
+  // Semantic pass, when the caller supplied a query vector and the library has
+  // been embedded. A passage found only here is the whole point: it shares no
+  // words with the question, which is precisely what keyword search cannot see.
+  let ranked = keyword;
+  if (o.queryVector && index.vectors && index.vectors.size) {
+    const semantic = searchVectors(index, o.queryVector, o);
+    if (semantic.length) ranked = rrfFuse([keyword, semantic]);
+  }
+
+  return takeWithinBudget(index, ranked, maxSnippets, maxChars);
+}
+
+/**
+ * BM25 ranking with the information-mass gate.
+ * @returns {Array<{ci:number, score:number}>} best first
+ */
+function keywordRank(index, query, o) {
   const qTerms = tokenize(query);
   if (!qTerms.length) return [];
 
@@ -357,38 +382,91 @@ function search(index, query, opts) {
   const scored = [];
   for (const [ci, e] of acc) {
     const eligible = tiny ? e.matches >= minMatches : e.mass >= massFloor;
-    if (eligible) scored.push({ chunk: index.chunks[ci], score: e.score });
+    if (eligible) scored.push({ ci, score: e.score });
   }
 
   scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
 
+// Walk a ranked list into the snippet/character budget.
+function takeWithinBudget(index, ranked, maxSnippets, maxChars) {
   const hits = [];
   let used = 0;
-  for (const s of scored) {
+  for (const s of ranked) {
     if (hits.length >= maxSnippets) break;
-    if (used + s.chunk.text.length > maxChars) {
+    const chunk = index.chunks[s.ci];
+    if (!chunk) continue;
+    if (used + chunk.text.length > maxChars) {
       // Skip an oversized chunk rather than stopping — a shorter later hit may
       // still fit in the remaining budget.
       if (used === 0) {
-        hits.push({
-          docName: s.chunk.docName,
-          heading: s.chunk.heading,
-          text: s.chunk.text.slice(0, maxChars),
-          score: s.score
-        });
+        hits.push({ docName: chunk.docName, heading: chunk.heading, text: chunk.text.slice(0, maxChars), score: s.score });
         used = maxChars;
       }
       continue;
     }
-    used += s.chunk.text.length;
-    hits.push({
-      docName: s.chunk.docName,
-      heading: s.chunk.heading,
-      text: s.chunk.text,
-      score: s.score
-    });
+    used += chunk.text.length;
+    hits.push({ docName: chunk.docName, heading: chunk.heading, text: chunk.text, score: s.score });
   }
   return hits;
+}
+
+// ── Semantic search + fusion ─────────────────────────────────────────────────
+
+// How many vector hits to consider before fusing. Wider than MAX_SNIPPETS so a
+// passage ranked 8th by meaning can still win once keyword agreement is counted.
+const VECTOR_CANDIDATES = 40;
+// Cosine floor for a vector hit. Embeddings return a ranking for *any* query, so
+// without a floor an unanswerable question always retrieves its nearest passage.
+const MIN_COSINE = 0.32;
+// Reciprocal-rank-fusion constant. The standard 60 — large enough that the top
+// few ranks are not overwhelmingly dominant, small enough to still matter.
+const RRF_K = 60;
+
+/**
+ * Cosine ranking over stored chunk vectors.
+ * @returns {Array<{ci:number, score:number}>} best first
+ */
+function searchVectors(index, queryVec, opts) {
+  const o = opts || {};
+  const limit = o.limit || VECTOR_CANDIDATES;
+  const floor = typeof o.minCosine === 'number' ? o.minCosine : MIN_COSINE;
+  if (!index || !index.vectors || !queryVec || !queryVec.length) return [];
+
+  const hits = [];
+  for (const [ci, vec] of index.vectors) {
+    if (vec.length !== queryVec.length) continue; // embedded under a different model
+    const score = dot(vec, queryVec);
+    if (score >= floor) hits.push({ ci, score });
+  }
+  hits.sort((a, b) => b.score - a.score);
+  return hits.slice(0, limit);
+}
+
+/**
+ * Reciprocal Rank Fusion.
+ *
+ * Deliberately rank-based rather than score-based: a BM25 score and a cosine
+ * similarity are not on comparable scales, and any attempt to normalise them
+ * into a weighted sum bakes in an arbitrary constant that stops being right as
+ * soon as the corpus changes. RRF only asks "how highly did each retriever rank
+ * this?", which is stable across corpus sizes and needs no tuning.
+ *
+ * @param {Array<Array<{ci:number}>>} lists ranked results, best first
+ */
+function rrfFuse(lists, k = RRF_K) {
+  const acc = new Map();
+  for (const list of lists) {
+    if (!list) continue;
+    list.forEach((hit, rank) => {
+      const prev = acc.get(hit.ci) || 0;
+      acc.set(hit.ci, prev + 1 / (k + rank + 1));
+    });
+  }
+  return [...acc.entries()]
+    .map(([ci, score]) => ({ ci, score }))
+    .sort((a, b) => b.score - a.score);
 }
 
 // ── Query construction ───────────────────────────────────────────────────────
@@ -456,6 +534,11 @@ module.exports = {
   addDocToIndex,
   finalizeIndex,
   search,
+  searchVectors,
+  rrfFuse,
+  VECTOR_CANDIDATES,
+  MIN_COSINE,
+  RRF_K,
   buildQuery,
   formatDocsBlock
 };

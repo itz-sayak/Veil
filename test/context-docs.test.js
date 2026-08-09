@@ -12,6 +12,8 @@ const {
   addDocToIndex,
   finalizeIndex,
   search,
+  searchVectors,
+  rrfFuse,
   buildQuery,
   formatDocsBlock
 } = require('../src/context-docs');
@@ -273,6 +275,101 @@ test('a corpus below the tiny threshold still answers on a plain term match', ()
   const hits = search(index, 'what is the wifi password?');
   assert.equal(hits.length, 1);
   assert.ok(hits[0].text.includes('hunter2'));
+});
+
+// ---- semantic fusion ----
+
+// Unit vectors pointing at a chosen axis, so "similarity" is exact and the test
+// is about the fusion mechanism rather than any model's judgement.
+function unit(dims, axis) {
+  const v = new Float32Array(dims);
+  v[axis] = 1;
+  return v;
+}
+function blend(dims, a, b, wa) {
+  const v = new Float32Array(dims);
+  v[a] = wa; v[b] = Math.sqrt(1 - wa * wa);
+  return v;
+}
+
+test('rrfFuse ranks a passage both retrievers liked above one only one of them did', () => {
+  const fused = rrfFuse([
+    [{ ci: 1 }, { ci: 2 }, { ci: 3 }],   // keyword order
+    [{ ci: 3 }, { ci: 1 }, { ci: 9 }]    // vector order
+  ]);
+  assert.equal(fused[0].ci, 1, 'ci 1 is 1st and 2nd across the two lists');
+  assert.ok(fused.some((f) => f.ci === 9), 'a vector-only hit still appears');
+});
+
+test('rrfFuse surfaces a passage no keyword hit found at all', () => {
+  const fused = rrfFuse([[], [{ ci: 7 }, { ci: 8 }]]);
+  assert.equal(fused[0].ci, 7);
+});
+
+test('rrfFuse needs no score normalisation between retrievers', () => {
+  // Same ranking, wildly different score scales — fusion must be identical.
+  const a = rrfFuse([[{ ci: 1, score: 0.001 }, { ci: 2, score: 0.0005 }]]);
+  const b = rrfFuse([[{ ci: 1, score: 9999 }, { ci: 2, score: 4321 }]]);
+  assert.deepEqual(a.map((x) => x.ci), b.map((x) => x.ci));
+  assert.deepEqual(a.map((x) => x.score), b.map((x) => x.score));
+});
+
+test('searchVectors ranks by cosine and honours the similarity floor', () => {
+  const index = { vectors: new Map([[0, unit(4, 0)], [1, blend(4, 0, 1, 0.9)], [2, unit(4, 1)]]) };
+  const hits = searchVectors(index, unit(4, 0), { minCosine: 0.5 });
+  assert.deepEqual(hits.map((h) => h.ci), [0, 1], 'the orthogonal vector is below the floor');
+  assert.ok(hits[0].score > hits[1].score);
+});
+
+test('searchVectors ignores vectors of a different width', () => {
+  // A library embedded under one model, then the user switches provider.
+  const index = { vectors: new Map([[0, unit(8, 0)], [1, unit(4, 0)]]) };
+  assert.deepEqual(searchVectors(index, unit(4, 0), { minCosine: 0.5 }).map((h) => h.ci), [1]);
+});
+
+test('searchVectors returns nothing without a query vector or an embedded index', () => {
+  assert.deepEqual(searchVectors({ vectors: new Map([[0, unit(4, 0)]]) }, null), []);
+  assert.deepEqual(searchVectors({}, unit(4, 0)), []);
+});
+
+// The reason semantic retrieval exists: a passage that shares no words with the
+// question. Keyword search scores it zero by construction; the vector pass has
+// to be what surfaces it.
+test('search finds a passage with zero keyword overlap when given a query vector', () => {
+  const index = buildIndex([doc('d1', 'handbook.md',
+    '# Service commitments\n\nOur agreement guarantees 99.95% availability every calendar month.' +
+    '\n\n# Kitchen\n\nThe coffee machine is descaled each Friday by the office manager.')]);
+
+  const question = 'what is our uptime promise?';
+  assert.deepEqual(search(index, question), [], 'precondition: keyword search cannot see it');
+
+  // Vectors say chunk 0 is the closest match.
+  index.vectors = new Map([[0, unit(4, 0)], [1, unit(4, 1)]]);
+  const hits = search(index, question, { queryVector: unit(4, 0) });
+
+  assert.ok(hits.length > 0, 'semantic pass should retrieve it');
+  assert.ok(hits[0].text.includes('99.95%'));
+});
+
+test('a query vector does not drag in passages below the similarity floor', () => {
+  const index = buildIndex([doc('d1', 'a.md', 'Alpha content here.\n\nBeta content here.')]);
+  index.vectors = new Map([[0, unit(4, 2)], [1, unit(4, 3)]]);
+  // Query vector orthogonal to both, and no keyword overlap either.
+  assert.deepEqual(search(index, 'entirely unrelated question about turbines', { queryVector: unit(4, 0) }), []);
+});
+
+test('adding a query vector does not lose a strong keyword match', () => {
+  const index = buildIndex([doc('d1', 'ops.md',
+    '# Deploys\n\nThe deploy freeze starts on the 14th of December.\n\n# Kitchen\n\nCoffee is restocked weekly.')]);
+  const q = 'when does the deploy freeze start?';
+  const keywordOnly = search(index, q);
+  assert.ok(keywordOnly[0].text.includes('14th'));
+
+  // Vectors disagree and prefer the wrong passage; fusion must still keep the
+  // keyword answer in the returned set.
+  index.vectors = new Map([[0, unit(4, 1)], [1, unit(4, 0)]]);
+  const fused = search(index, q, { queryVector: unit(4, 0) });
+  assert.ok(fused.some((h) => h.text.includes('14th')), 'keyword answer must survive fusion');
 });
 
 // ---- query construction ----

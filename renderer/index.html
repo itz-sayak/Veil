@@ -209,6 +209,15 @@
               <button id="docs-toggle" class="switch" role="switch" aria-checked="true"><span class="knob"></span></button>
             </div>
 
+            <div class="s-toggle-row">
+              <div>
+                <div class="s-toggle-title">Semantic search <span class="s-hint" id="docs-semantic-badge"></span></div>
+                <div class="s-toggle-sub">Also match on meaning, so "what's our uptime promise?" finds a page that only says "service level agreement". Needs an OpenAI or Gemini key, and spends a little API credit: once per document when you add it, and a small call per question.</div>
+              </div>
+              <button id="docs-semantic-toggle" class="switch" role="switch" aria-checked="false"><span class="knob"></span></button>
+            </div>
+            <div class="s-hint" id="docs-semantic-status"></div>
+
             <div id="docs-drop" class="docs-drop">
               <div class="docs-drop-title">Drop .md, .txt or .pdf files here</div>
               <div class="docs-drop-sub">or</div>

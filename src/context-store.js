@@ -9,6 +9,7 @@
 //   <userData>/context/
 //     index.json    metadata for every document
 //     <id>.json     the chunks of one document
+//     <id>.vec      their embedding vectors, when semantic search is on
 
 const fs = require('fs');
 const path = require('path');
@@ -17,6 +18,8 @@ const {
   chunkText, search, buildQuery, formatDocsBlock,
   createIndexBuilder, addDocToIndex, finalizeIndex
 } = require('./context-docs');
+const { createEmbedder } = require('./embeddings');
+const store = require('./store');
 
 const DIR = path.join(app.getPath('userData'), 'context');
 const INDEX_FILE = path.join(DIR, 'index.json');
@@ -69,6 +72,53 @@ function saveMeta() {
 function chunkFile(id) {
   if (!ID_RE.test(id)) throw new Error('bad document id');
   return path.join(DIR, id + '.json');
+}
+
+function vecFile(id) {
+  if (!ID_RE.test(id)) throw new Error('bad document id');
+  return path.join(DIR, id + '.vec');
+}
+
+// ── embedding vectors ────────────────────────────────────────────────────────
+//
+// Stored as raw little-endian float32, not JSON: a 512-dimension vector is 2 KB
+// binary against roughly 12 KB as text, and it loads with one read and no parse.
+// The header records which model produced them, so switching provider rebuilds
+// rather than silently comparing vectors from two different spaces.
+
+const VEC_MAGIC = 'VEIL1';
+
+function writeVectors(id, embedderId, vectors) {
+  const dims = vectors.length ? vectors[0].length : 0;
+  const header = Buffer.from(JSON.stringify({ magic: VEC_MAGIC, embedderId, dims, count: vectors.length }) + '\n', 'utf8');
+  const body = Buffer.alloc(vectors.length * dims * 4);
+  vectors.forEach((v, i) => {
+    for (let d = 0; d < dims; d++) body.writeFloatLE(v[d], (i * dims + d) * 4);
+  });
+  fs.writeFileSync(vecFile(id), Buffer.concat([header, body]));
+}
+
+function readVectors(id, embedderId) {
+  let buf;
+  try { buf = fs.readFileSync(vecFile(id)); } catch (_) { return null; }
+  const nl = buf.indexOf(0x0a);
+  if (nl < 0) return null;
+  let head;
+  try { head = JSON.parse(buf.slice(0, nl).toString('utf8')); } catch (_) { return null; }
+  // Written by a different model, or a different Veil — treat as absent so it
+  // gets rebuilt instead of poisoning similarity with incomparable vectors.
+  if (head.magic !== VEC_MAGIC || head.embedderId !== embedderId) return null;
+
+  const { dims, count } = head;
+  const body = buf.slice(nl + 1);
+  if (body.length < count * dims * 4) return null;
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const v = new Float32Array(dims);
+    for (let d = 0; d < dims; d++) v[d] = body.readFloatLE((i * dims + d) * 4);
+    out.push(v);
+  }
+  return out;
 }
 
 // ── public: listing and mutation ─────────────────────────────────────────────
@@ -167,6 +217,96 @@ function setDocEnabled(id, on) {
   return { ok: true, docs: listDocs() };
 }
 
+// ── semantic search ──────────────────────────────────────────────────────────
+
+function semanticSettings() {
+  const s = store.getSettings() || {};
+  return { on: !!(s.contextDocs && s.contextDocs.semantic), settings: s };
+}
+
+// The embedder for the current settings, or null when semantic search is off or
+// no key can produce embeddings.
+function activeEmbedder() {
+  const { on, settings } = semanticSettings();
+  if (!on) return null;
+  const e = createEmbedder(settings);
+  return e.ready ? e : null;
+}
+
+let embedJob = null;
+
+/**
+ * Embeds any document that has no usable vectors yet, in the background.
+ *
+ * Deliberately decoupled from upload: a document is keyword-searchable the
+ * instant it lands, and embedding — which costs an API call and real seconds on
+ * a large file — catches up behind it. Nothing waits on this.
+ */
+function embedPending(onProgress) {
+  if (embedJob) return embedJob;
+  const embedder = activeEmbedder();
+  if (!embedder) return Promise.resolve({ ok: false, reason: 'off' });
+
+  embedJob = (async () => {
+    let done = 0, failed = 0;
+    for (const d of loadMeta().docs) {
+      if (readVectors(d.id, embedder.id)) continue; // already current
+      const doc = readDoc(d.id);
+      if (!doc || !doc.chunks.length) continue;
+      try {
+        if (onProgress) onProgress({ name: d.name, state: 'embedding' });
+        // Heading + text, matching what the keyword index sees, so both
+        // retrievers are looking at the same passage.
+        const texts = doc.chunks.map((c) => (c.heading ? c.heading + '\n' : '') + c.text);
+        const vectors = await embedder.embed(texts);
+        if (vectors.length === doc.chunks.length) {
+          writeVectors(d.id, embedder.id, vectors);
+          done++;
+          cachedIndex = null; // pick the new vectors up on the next warm-up
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        failed++;
+        if (onProgress) onProgress({ name: d.name, state: 'embed-error', error: shortError(e) });
+      }
+    }
+    return { ok: true, embedded: done, failed, provider: embedder.provider, model: embedder.model };
+  })();
+
+  const inFlight = embedJob;
+  return embedJob.finally(() => { if (embedJob === inFlight) embedJob = null; });
+}
+
+function shortError(e) {
+  const m = (e && e.message) ? e.message : String(e);
+  return m.length > 200 ? m.slice(0, 200) + '…' : m;
+}
+
+// Query vectors are cached: the same question asked twice, or Assist fired
+// repeatedly against an unchanged transcript, should not pay twice.
+const queryVecCache = new Map();
+const QUERY_CACHE_MAX = 64;
+// A question must not wait on a slow embedding endpoint. Past this, the answer
+// goes out with keyword retrieval alone rather than stalling a live call.
+const QUERY_EMBED_TIMEOUT_MS = 2500;
+
+async function embedQuery(embedder, query) {
+  const key = embedder.id + ' ' + query;
+  if (queryVecCache.has(key)) return queryVecCache.get(key);
+
+  const vec = await Promise.race([
+    embedder.embed([query]).then((v) => v[0] || null),
+    new Promise((resolve) => setTimeout(() => resolve(null), QUERY_EMBED_TIMEOUT_MS))
+  ]);
+
+  if (vec) {
+    if (queryVecCache.size >= QUERY_CACHE_MAX) queryVecCache.delete(queryVecCache.keys().next().value);
+    queryVecCache.set(key, vec);
+  }
+  return vec;
+}
+
 // ── retrieval ────────────────────────────────────────────────────────────────
 
 function enabledDocIds() {
@@ -202,18 +342,38 @@ function warmIndex() {
   const startedAt = generation;
   const ids = enabledDocIds();
 
+  const embedder = activeEmbedder();
+
   warming = (async () => {
     const b = createIndexBuilder();
+    // chunkIndex -> vector, filled only for documents that have been embedded.
+    // Partial coverage is fine and expected: embedding runs in the background,
+    // so a freshly-added document is keyword-searchable immediately and gains
+    // semantic reach a moment later.
+    const vectors = new Map();
+
     for (const id of ids) {
       // A document was added, removed or toggled while we were building — this
       // pass is describing a library that no longer exists.
       if (generation !== startedAt) return null;
       const doc = readDoc(id);
-      if (doc) addDocToIndex(b, doc);
+      if (doc) {
+        const base = b.chunks.length;
+        addDocToIndex(b, doc);
+        if (embedder) {
+          const vecs = readVectors(id, embedder.id);
+          // Guard against a chunk/vector mismatch — a document re-uploaded with
+          // different content leaves a stale .vec until re-embedding finishes.
+          if (vecs && vecs.length === b.chunks.length - base) {
+            vecs.forEach((v, i) => vectors.set(base + i, v));
+          }
+        }
+      }
       await new Promise((r) => setImmediate(r));
     }
     if (generation !== startedAt) return null;
     cachedIndex = finalizeIndex(b);
+    cachedIndex.vectors = vectors;
     return cachedIndex;
   })();
 
@@ -247,12 +407,58 @@ async function buildDocsContext({ mode, transcript, userText, settings }) {
   const index = cachedIndex || await warmIndex();
   if (!index || !index.n) return null;
 
-  const block = formatDocsBlock(search(index, query));
+  // Semantic pass, only when it can actually contribute: the setting is on, a
+  // key that embeds is present, and the library has vectors to compare against.
+  // Any failure here — no key, network down, provider slow — silently leaves
+  // keyword retrieval to answer on its own.
+  let queryVector = null;
+  if (index.vectors && index.vectors.size) {
+    const embedder = activeEmbedder();
+    if (embedder) {
+      try { queryVector = await embedQuery(embedder, query); }
+      catch (_) { queryVector = null; }
+    }
+  }
+
+  const block = formatDocsBlock(search(index, query, { queryVector }));
   return block || null;
 }
 
 function hasEnabledDocs() {
   return loadMeta().docs.some((d) => d.enabled !== false);
+}
+
+/**
+ * What the Context settings screen shows about semantic search: whether it is
+ * on, whether it can actually run, and how much of the library is covered.
+ */
+function semanticStatus() {
+  const { on, settings } = semanticSettings();
+  const probe = createEmbedder(settings);
+  const docs = loadMeta().docs;
+  let embedded = 0;
+  if (on && probe.ready) {
+    for (const d of docs) if (readVectors(d.id, probe.id)) embedded++;
+  }
+  return {
+    on,
+    available: probe.ready,
+    provider: probe.provider,
+    model: probe.model,
+    embedded,
+    total: docs.length,
+    working: !!embedJob
+  };
+}
+
+// Drop every stored vector — used when semantic search is turned off, so the
+// user's disk isn't left holding embeddings for a feature they disabled.
+function clearVectors() {
+  for (const d of loadMeta().docs) {
+    try { fs.unlinkSync(vecFile(d.id)); } catch (_) { /* already gone */ }
+  }
+  queryVecCache.clear();
+  cachedIndex = null;
 }
 
 module.exports = {
@@ -266,5 +472,8 @@ module.exports = {
   setDocEnabled,
   buildDocsContext,
   warmIndex,
-  hasEnabledDocs
+  hasEnabledDocs,
+  embedPending,
+  semanticStatus,
+  clearVectors
 };
