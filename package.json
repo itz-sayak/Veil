@@ -1,0 +1,87 @@
+{
+  "name": "veil",
+  "version": "1.0.0",
+  "description": "Veil — an open-source, cross-platform invisible AI overlay. Screen, mic and system audio into an LLM, with document-grounded answers, customizable persona Modes, remappable keybindings, and screen-share undetectability. A private Cluely-style copilot for meetings, interviews, and coding problems.",
+  "license": "GPL-3.0-or-later",
+  "author": "Sayak Dutta <sayak.dutta@iitgn.ac.in> (https://github.com/itz-sayak)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itz-sayak/Veil.git"
+  },
+  "bugs": {
+    "url": "https://github.com/itz-sayak/Veil/issues"
+  },
+  "homepage": "https://github.com/itz-sayak/Veil#readme",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "bench": "node --expose-gc bench/context-retrieval.js",
+    "bench:huge": "node --expose-gc --max-old-space-size=4096 bench/context-retrieval.js --huge",
+    "bench:sweep": "node bench/context-retrieval.js --sweep",
+    "postinstall": "node scripts/rename-electron.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --mac zip",
+    "dist:mac": "electron-builder --mac zip",
+    "dist:win": "electron-builder --win zip"
+  },
+  "build": {
+    "appId": "com.veil.overlay",
+    "productName": "Veil",
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "vendor/**/*",
+      "!node_modules/**/*.{map,mts,ts}"
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null,
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSMicrophoneUsageDescription": "Veil transcribes your microphone so it can help you in conversations.",
+        "NSCameraUsageDescription": "Veil does not use the camera.",
+        "NSAudioCaptureUsageDescription": "Veil captures system audio to transcribe the other participant in a call."
+      }
+    },
+    "win": {
+      "target": [
+        "dir"
+      ]
+    }
+  },
+  "keywords": [
+    "electron",
+    "overlay",
+    "ai",
+    "assistant",
+    "copilot",
+    "windows",
+    "macos",
+    "cross-platform"
+  ],
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "^26.15.3",
+    "resedit": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@google/genai": "^0.3.0",
+    "lucide-static": "^0.468.0",
+    "openai": "^4.73.0",
+    "pdfjs-dist": "^6.2.108",
+    "ws": "^8.18.0"
+  }
+}

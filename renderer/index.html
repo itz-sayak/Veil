@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob: mediastream:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none';" />
+  <title>Veil</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Dedicated drag handle / top bar -->
+    <div id="toolbar" class="drag-handle">
+      <div class="drag-pill" title="Drag to move window">
+        <span class="drag-dots" aria-hidden="true"></span>
+        <span class="drag-label">Drag</span>
+      </div>
+      <button class="tb-logo" id="logo-btn" title="Veil"></button>
+      <div class="tb-divider"></div>
+      <button class="tb-mode" id="mode-btn" title="Switch mode">
+        <span id="mode-btn-label">General</span><span class="mode-chev"></span>
+      </button>
+      <div class="tb-divider"></div>
+      <button class="tb-hide" id="hide-btn"><span class="chev"></span><span>Hide</span></button>
+      <div class="tb-divider"></div>
+      <button class="tb-stop" id="stop-btn" title="Start / stop listening"></button>
+      <div class="tb-divider"></div>
+      <button class="tb-stealth" id="stealth-btn" title="Undetectability: on — click to turn off"></button>
+
+      <!-- Mode switcher popover -->
+      <div id="mode-menu" class="mode-menu hidden">
+        <div class="mode-menu-head">Modes</div>
+        <div id="mode-menu-list" class="mode-menu-list"></div>
+        <button id="mode-menu-manage" class="mode-menu-manage">Manage modes…</button>
+      </div>
+    </div>
+
+    <!-- Main assistant panel -->
+    <div id="panel-wrap">
+      <span id="live-dot" class="off"></span>
+      <div id="stt-status" class="stt-status stt-disconnected" title="STT connection status">off</div>
+      <div id="panel" class="glass no-drag">
+        <div id="messages"></div>
+
+        <div id="transcript-wrap" class="transcript-wrap hidden">
+          <div id="transcript-list" class="transcript-list"></div>
+        </div>
+
+        <div id="action-row">
+          <button class="act act-primary" data-mode="assist"
+            title="Scans your screen and conversation to decide what you need">
+            <span class="ic"></span><span>Assist</span>
+            <span class="shortcut-hint" id="assist-shortcut-hint"></span>
+          </button>
+          <span class="sep">•</span>
+          <button class="act" data-mode="say"
+            title="Suggests what to say next based on the conversation">
+            <span class="ic"></span><span>What should I say?</span>
+            <span class="shortcut-hint" id="say-shortcut-hint"></span>
+          </button>
+          <span class="sep">•</span>
+          <button class="act" data-mode="followup" title="Suggest follow-up questions to ask"><span class="ic"></span><span>Follow-up questions</span></button>
+          <span class="sep">•</span>
+          <button class="act" data-mode="recap" title="Summarize the conversation so far"><span class="ic"></span><span>Recap</span></button>
+          <div class="spacer"></div>
+          <button class="act act-icon" id="transcript-toggle-btn" title="Show/hide what was heard" aria-label="Toggle transcript"><span class="ic"></span></button>
+          <button class="act act-icon act-clear" id="clear-transcript-btn" title="Clear transcript and start fresh" aria-label="Clear transcript"><span class="ic"></span></button>
+        </div>
+
+        <div id="composer">
+          <div id="input-area">
+            <div id="placeholder">Ask about your screen or conversation, or <span class="keycap">⌘</span><span class="keycap">⏎</span> for Assist</div>
+            <textarea id="input" rows="1" spellcheck="false"></textarea>
+          </div>
+          <div id="composer-bottom">
+            <button id="smart-toggle" class="smart-pill"><span class="ic"></span><span>Smart</span></button>
+            <button id="more-btn" class="more-btn" title="Settings"></button>
+            <div class="spacer"></div>
+            <button id="send-btn" title="Send"></button>
+          </div>
+        </div>
+
+        <div id="prep-status" class="prep-status">
+          <span class="prep-item" data-field="resume">📄 Resume</span>
+          <span class="prep-item" data-field="jd">💼 JD</span>
+          <span class="prep-item" data-field="stories">🎯 Stories</span>
+          <span class="prep-item" data-field="salary">💰 Salary</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings (sidebar layout) -->
+  <div id="settings-scrim" class="hidden">
+    <div id="settings" class="glass">
+      <div class="s-head">
+        <div class="s-brand"><span class="s-logo" id="s-logo"></span><span class="s-title">Veil</span></div>
+        <button id="s-close" class="s-close">Done</button>
+      </div>
+
+      <div class="s-main">
+        <!-- Sidebar navigation -->
+        <nav class="s-nav" id="s-nav">
+          <button class="s-nav-item on" data-section="general"><span class="s-nav-ic" data-ic="settings"></span>General</button>
+          <button class="s-nav-item" data-section="modes"><span class="s-nav-ic" data-ic="sparkles"></span>Modes</button>
+          <button class="s-nav-item" data-section="keybinds"><span class="s-nav-ic" data-ic="keyboard"></span>Keybinds</button>
+          <button class="s-nav-item" data-section="profile"><span class="s-nav-ic" data-ic="user"></span>Profile</button>
+          <button class="s-nav-item" data-section="context"><span class="s-nav-ic" data-ic="file-text"></span>Context</button>
+          <button class="s-nav-item" data-section="security"><span class="s-nav-ic" data-ic="shield"></span>Security</button>
+          <button class="s-nav-item" data-section="language"><span class="s-nav-ic" data-ic="languages"></span>Language</button>
+        </nav>
+
+        <!-- Content -->
+        <div class="s-content">
+
+          <!-- General -->
+          <section class="s-section" data-section="general">
+            <h3 class="s-h">Provider &amp; models</h3>
+            <label class="s-label">Provider</label>
+            <div class="s-seg" id="provider-seg">
+              <button data-provider="openai">OpenAI</button>
+              <button data-provider="anthropic">Anthropic</button>
+              <button data-provider="gemini">Gemini</button>
+            </div>
+
+            <label class="s-label">API keys <span class="s-hint">encrypted at rest · never sent to any server but your provider</span></label>
+            <div class="s-field"><span>OpenAI</span><input id="key-openai" type="password" placeholder="sk-..." autocomplete="off" /></div>
+            <div class="s-field"><span>Anthropic</span><input id="key-anthropic" type="password" placeholder="sk-ant-..." autocomplete="off" /></div>
+            <div class="s-field"><span>Gemini</span><input id="key-gemini" type="password" placeholder="AIza..." autocomplete="off" /></div>
+            <div class="s-field"><span>Deepgram</span><input id="key-deepgram" type="password" placeholder="dg-..." autocomplete="off" /></div>
+
+            <label class="s-label">Models <span class="s-hint">fast = Smart off · smart = Smart on</span></label>
+            <div class="s-field"><span>Fast</span><input id="model-fast" type="text" autocomplete="off" /></div>
+            <div class="s-field"><span>Smart</span><input id="model-smart" type="text" autocomplete="off" /></div>
+
+            <label class="s-label">Assistant access <span class="s-hint">programs allowed to see what Veil is doing</span></label>
+            <div class="s-callers" id="applink-callers"></div>
+
+            <div class="s-status" id="s-status"></div>
+          </section>
+
+          <!-- Modes -->
+          <section class="s-section hidden" data-section="modes">
+            <h3 class="s-h">Modes <span class="s-hint">a system prompt that shapes every response</span></h3>
+            <div class="modes-layout">
+              <div class="modes-list" id="modes-list"></div>
+              <div class="modes-editor">
+                <label class="s-label">Name</label>
+                <input id="mode-name" type="text" placeholder="e.g. Technical interview" autocomplete="off" />
+                <label class="s-label">System prompt <span class="s-hint">who Veil is being for you in this mode</span></label>
+                <textarea id="mode-prompt" rows="9" spellcheck="false" placeholder="Describe how Veil should behave in this mode…"></textarea>
+                <div class="modes-actions">
+                  <button id="mode-new" class="btn-ghost">+ New mode</button>
+                  <div class="spacer"></div>
+                  <button id="mode-delete" class="btn-danger">Delete</button>
+                  <button id="mode-save" class="btn-primary">Save</button>
+                </div>
+                <div class="s-status" id="mode-status"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Keybinds -->
+          <section class="s-section hidden" data-section="keybinds">
+            <h3 class="s-h">Keybinds <span class="s-hint">click a shortcut, then press the new keys</span></h3>
+            <div id="keybinds-list" class="keybinds-list"></div>
+            <div class="modes-actions">
+              <div class="spacer"></div>
+              <button id="keybinds-reset" class="btn-ghost">Reset to defaults</button>
+            </div>
+            <div class="s-status" id="keybinds-status"></div>
+          </section>
+
+          <!-- Profile -->
+          <section class="s-section hidden" data-section="profile">
+            <h3 class="s-h">Profile &amp; interview prep</h3>
+            <label class="s-label">Your resume <span class="s-hint">paste full resume — Veil parses it into sections</span></label>
+            <textarea id="resume-text" rows="6" spellcheck="false" placeholder="Paste your full resume here. Veil will extract Name, Summary, Experience, Skills, Projects, and Education automatically."></textarea>
+
+            <label class="s-label">Target job description <span class="s-hint">optional — every answer gets tailored to this role</span></label>
+            <textarea id="job-description" rows="4" spellcheck="false" placeholder="Paste the job description for the role you're interviewing for."></textarea>
+
+            <label class="s-label">Your STAR stories <span class="s-hint">3–5 real behavioral stories</span></label>
+            <textarea id="star-stories" rows="6" spellcheck="false" placeholder="Story 1: At [Company], we faced [situation]. I was responsible for [task]. I did [actions]. The result was [outcome]."></textarea>
+
+            <label class="s-label">Why this company</label>
+            <textarea id="why-company" rows="2" spellcheck="false" placeholder="Why do you want to work here?"></textarea>
+
+            <label class="s-label">Why leaving current role <span class="s-hint">keep it positive</span></label>
+            <textarea id="why-leaving" rows="2" spellcheck="false" placeholder="e.g. I've grown a lot and I'm looking for [next challenge]…"></textarea>
+
+            <label class="s-label">Work style &amp; values</label>
+            <textarea id="work-style" rows="2" spellcheck="false" placeholder="How you work, decision-making style, values…"></textarea>
+
+            <label class="s-label">Salary target</label>
+            <input id="salary-target" type="text" placeholder="e.g. $150k–$180k base + equity" autocomplete="off" />
+
+            <label class="s-label">Questions to ask the interviewer</label>
+            <textarea id="questions-to-ask" rows="4" spellcheck="false" placeholder="- What does success look like in the first 90 days?&#10;- How does the team handle technical debt?"></textarea>
+          </section>
+
+          <!-- Context documents -->
+          <section class="s-section hidden" data-section="context">
+            <h3 class="s-h">Context <span class="s-hint">files Veil can quote from when answering</span></h3>
+            <div class="s-toggle-row">
+              <div>
+                <div class="s-toggle-title">Use my documents</div>
+                <div class="s-toggle-sub">Veil pulls the passages relevant to each question — not the whole file — so answers stay fast.</div>
+              </div>
+              <button id="docs-toggle" class="switch" role="switch" aria-checked="true"><span class="knob"></span></button>
+            </div>
+
+            <div id="docs-drop" class="docs-drop">
+              <div class="docs-drop-title">Drop .md, .txt or .pdf files here</div>
+              <div class="docs-drop-sub">or</div>
+              <button id="docs-pick" class="btn-primary">Choose files…</button>
+            </div>
+
+            <div id="docs-list" class="docs-list"></div>
+            <div class="s-status" id="docs-status"></div>
+            <div class="s-note">
+              <strong>How it's used.</strong> Uploaded files are stored on this device only and are never
+              sent anywhere on their own. For each question Veil picks the few most relevant passages and
+              includes them with that one request, marked as reference data the model must not treat as
+              instructions. LeetCode mode ignores documents entirely.
+            </div>
+          </section>
+
+          <!-- Security -->
+          <section class="s-section hidden" data-section="security">
+            <h3 class="s-h">Security &amp; undetectability</h3>
+            <div class="s-toggle-row">
+              <div>
+                <div class="s-toggle-title">Undetectability</div>
+                <div class="s-toggle-sub">Exclude Veil from screen shares and recordings, and hide it from the taskbar.</div>
+              </div>
+              <button id="stealth-toggle" class="switch" role="switch" aria-checked="true"><span class="knob"></span></button>
+            </div>
+            <div id="sec-info" class="sec-info"></div>
+            <div class="s-note">
+              <strong>How it works.</strong> Veil uses your OS's native capture-exclusion
+              (NSWindowSharingNone on macOS, WDA_EXCLUDEFROMCAPTURE on Windows 10 2004+). This is
+              best-effort: some capture paths (e.g. Zoom "without window filtering", or macOS 15.4+ in
+              certain modes) may still see the window. On Linux, capture exclusion depends on the compositor.
+            </div>
+            <div class="s-note">
+              <strong>API keys.</strong> Keys are encrypted at rest with your OS keychain and stored only on
+              this device. Veil has no servers and sends no telemetry — requests go directly to your chosen provider.
+            </div>
+          </section>
+
+          <!-- Language -->
+          <section class="s-section hidden" data-section="language">
+            <h3 class="s-h">Language <span class="s-hint">language Veil replies in</span></h3>
+            <label class="s-label">Response language</label>
+            <select id="language-select" class="s-select">
+              <option value="en">English</option>
+              <option value="es">Español (Spanish)</option>
+              <option value="fr">Français (French)</option>
+              <option value="de">Deutsch (German)</option>
+              <option value="pt">Português (Portuguese)</option>
+              <option value="it">Italiano (Italian)</option>
+              <option value="nl">Nederlands (Dutch)</option>
+              <option value="hi">हिन्दी (Hindi)</option>
+              <option value="ja">日本語 (Japanese)</option>
+              <option value="ko">한국어 (Korean)</option>
+              <option value="zh-Hans">简体中文 (Simplified Chinese)</option>
+              <option value="zh-Hant">繁體中文 (Traditional Chinese)</option>
+              <option value="ar">العربية (Arabic)</option>
+              <option value="ru">Русский (Russian)</option>
+              <option value="tr">Türkçe (Turkish)</option>
+              <option value="pl">Polski (Polish)</option>
+              <option value="id">Bahasa Indonesia</option>
+              <option value="vi">Tiếng Việt (Vietnamese)</option>
+            </select>
+            <div class="s-note">Transcription of speech still depends on your STT provider's language support.</div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-run tutorial / walkthrough -->
+  <div id="onboard-scrim" class="hidden">
+    <div id="onboard" class="glass">
+      <div class="ob-dots" id="ob-dots"></div>
+      <div class="ob-icon" id="ob-icon"></div>
+      <div class="ob-title" id="ob-title"></div>
+      <div class="ob-body" id="ob-body"></div>
+      <div class="ob-buttons" id="ob-buttons"></div>
+      <div class="ob-actions">
+        <button id="ob-skip" class="ob-ghost">Skip</button>
+        <div class="spacer"></div>
+        <button id="ob-back" class="ob-ghost">Back</button>
+        <button id="ob-next" class="ob-primary">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Assistant access request. Shown in-window rather than as a native dialog:
+       Veil hides its dock icon, so an OS panel never comes forward and cannot be
+       clicked. -->
+  <div id="consent-scrim" class="hidden">
+    <div id="consent" class="glass">
+      <div class="cs-title" id="cs-title"></div>
+      <div class="cs-body" id="cs-body"></div>
+      <div class="cs-actions">
+        <button id="cs-deny" class="ob-ghost">Don’t allow</button>
+        <button id="cs-allow" class="ob-primary">Allow</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="icons.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
