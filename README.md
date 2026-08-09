@@ -32,7 +32,19 @@ It does not stuff whole files into the prompt. For each question it finds the ha
 
 **How it decides what's relevant.** Files are split into ~900-character passages (tagged with their markdown headings), indexed with BM25, and searched against your question plus the last few things the other person said. If nothing scores well enough, nothing is added — Veil stays quiet rather than padding the prompt with noise.
 
-**Your documents win where they apply; the model's own knowledge fills the rest.** If the retrieved passages answer the question, Veil prefers them over what the model thinks it knows. If they don't, it just answers normally. It never refuses a question merely because your files don't cover it, and it will not claim your documents say something they don't.
+### What if the answer isn't in your documents?
+
+**Veil still answers — using the model's own knowledge, over the normal API call.** Uploading documents adds grounding; it never restricts what Veil is allowed to answer. There are three cases, and you don't have to do anything to switch between them:
+
+| What happened | What Veil does |
+| --- | --- |
+| Nothing in your files matched the question | Adds nothing to the prompt and answers normally from the model's own knowledge — exactly as if you'd uploaded nothing at all |
+| Your files matched **and** contain the answer | Prefers your documents over what the model thinks it knows, and won't contradict them |
+| Your files matched but **don't** actually contain the answer | Falls back to the model's own knowledge and answers anyway |
+
+So asking "explain how B-trees work" while your uploaded files are all about your company's billing policy gets you a normal, complete answer about B-trees. Veil will **never** reply "that isn't in your documents" and stop there — that's a real failure mode for this kind of feature, and it's explicitly instructed against.
+
+The one thing it won't do is *invent* things and attribute them to your files: it won't claim your handbook says something it doesn't.
 
 Everything stays on your machine. Files are parsed locally, indexed locally, and only the selected excerpts are sent — with the request you made, to the provider you configured. LeetCode mode ignores documents entirely.
 
