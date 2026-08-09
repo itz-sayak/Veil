@@ -45,7 +45,24 @@ That gap is measurable. On a ten-passage handbook where every fact can be asked 
 
 Turning on **Settings → Context → Semantic search** adds a second retriever that compares *meaning* instead of spelling. Both retrievers run and their rankings are combined, so semantic reach is added without giving up the precision keyword search already had.
 
-**What it costs.** One embedding call per document when you add it, and a small one per question. It needs an **OpenAI or Gemini** key — Anthropic has no embeddings API, so an Anthropic-only setup stays keyword-only. It is **off by default**, because it spends your API credit and that should be your decision rather than a surprise on your next bill.
+**What it costs.** One embedding call per document when you add it, and a small one per question. It is **off by default**, because it spends your API credit and that should be your decision rather than a surprise on your next bill. Embeddings are far cheaper than chat — this is cents, not pounds.
+
+#### Which keys give you what
+
+Answers work with any of the three providers. Semantic search needs one that can produce embeddings, and **Anthropic doesn't publish an embeddings endpoint** — that's a gap in their API, not a choice Veil made.
+
+| Keys you hold | Answers | Semantic search |
+| --- | --- | --- |
+| Anthropic only | ✅ | ❌ keyword only |
+| OpenAI only | ✅ | ✅ via OpenAI |
+| Gemini only | ✅ | ✅ via Gemini |
+| Anthropic **+** OpenAI | ✅ | ✅ via OpenAI |
+| Anthropic **+** Gemini | ✅ | ✅ via Gemini |
+| Any two or three | ✅ | ✅ |
+
+So being on Claude doesn't shut you out. Add an OpenAI or Gemini key alongside your Anthropic one and you keep chatting with Claude while embeddings quietly come from the other provider — Veil prefers your chat provider for embeddings when it can and falls back to whichever key is able to do the job. Since embeddings cost a tiny fraction of what chat does, that second key barely registers on a bill.
+
+If you're Anthropic-only, the Context screen says so plainly instead of offering a toggle that can't work, and you keep full keyword retrieval — which scores 10/10 on literally-worded questions.
 
 **How it fails.** Safely, in every direction. No key, network down, or provider slow (past 2.5s) and the question is simply answered with keyword retrieval — it never delays a live call waiting on an embedding. Documents are keyword-searchable the instant they're added; embedding catches up in the background. Switching provider marks the stored vectors unusable and re-embeds rather than comparing vectors from two different models. Turning the setting off deletes the vectors from disk.
 
