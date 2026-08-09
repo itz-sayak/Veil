@@ -43,7 +43,15 @@ That gap is measurable. On a ten-passage handbook where every fact can be asked 
 | using the document's own words | **10/10** |
 | paraphrased | **1/10** |
 
-Turning on **Settings → Context → Semantic search** adds a second retriever that compares *meaning* instead of spelling. Both retrievers run and their rankings are combined, so semantic reach is added without giving up the precision keyword search already had.
+Semantic search adds a second retriever that compares *meaning* instead of spelling. Both retrievers run and their rankings are combined, so you gain semantic reach without giving up the precision keyword search already had.
+
+#### Turning it on
+
+1. Open **Settings** — the **⋯** button at the bottom of the composer, or press `Ctrl + ,` (`⌘ + ,` on macOS).
+2. Pick **Context** in the left sidebar.
+3. Flip the **Semantic search** switch, the second toggle on that screen.
+
+The switch tells you what it can see. If it reads *"needs an OpenAI or Gemini key"* it stays inert until you add one under **Settings → General**. Once on, the line beneath tracks progress — *"Embedding documents…"*, then *"All 4 documents embedded"*. Documents you add later are embedded automatically.
 
 **What it costs.** One embedding call per document when you add it, and a small one per question. It is **off by default**, because it spends your API credit and that should be your decision rather than a surprise on your next bill. Embeddings are far cheaper than chat — this is cents, not pounds.
 
